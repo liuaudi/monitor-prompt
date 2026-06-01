@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Launch `claude` with ANTHROPIC_BASE_URL pre-set so the session is
+# captured by the monitor-claude-code proxy.
+#
+# Usage:
+#   monitor-claude              # interactive session through the proxy
+#   monitor-claude -p "hello"   # one-shot, passes any args through to claude
+#
+# If the proxy isn't already running, this script starts it first.
+set -euo pipefail
+
+PORT="${MONITOR_PROMPT_PORT:-9999}"
+SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+START="$SKILL_DIR/scripts/start.sh"
+
+# Make sure the proxy is up. start.sh is idempotent.
+if ! lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+  echo "monitor-claude: proxy not running, starting it..." >&2
+  bash "$START" >/dev/null
+  # Give the listener a beat to bind.
+  for _ in 1 2 3 4 5; do
+    lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1 && break
+    sleep 0.2
+  done
+fi
+
+if ! command -v claude >/dev/null 2>&1; then
+  echo "monitor-claude: 'claude' CLI not found on PATH" >&2
+  exit 127
+fi
+
+# Hand off to claude with the proxy URL set. exec replaces this shell so
+# Ctrl-C, exit codes, and TTY behavior all match a normal `claude` invocation.
+exec env ANTHROPIC_BASE_URL="http://127.0.0.1:$PORT" claude "$@"

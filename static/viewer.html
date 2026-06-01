@@ -1,0 +1,1191 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>monitor-claude-code · Claude Code wire viewer</title>
+<style>
+  :root {
+    --bg: #0e1014;
+    --panel: #161a21;
+    --panel-2: #1c222b;
+    --border: #262d38;
+    --text: #e6eaf0;
+    --text-2: #9aa3b2;
+    --text-3: #5e6877;
+    --accent: #8a9bf0;
+    --accent-soft: rgba(138,155,240,0.10);
+    --accent-line: rgba(138,155,240,0.35);
+    --good: #6ec38b;
+    --bad: #e26b73;
+    --code-bg: #11151c;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 13px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    overflow: hidden;
+  }
+  pre, code, .mono {
+    font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  .topbar {
+    height: 48px; padding: 0 16px;
+    display: flex; align-items: center; gap: 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+  }
+  .topbar h1 {
+    font-size: 14px; font-weight: 700; margin: 0;
+    letter-spacing: -0.2px;
+  }
+  .topbar .subtitle {
+    color: var(--text-3); font-size: 12px;
+  }
+  .topbar-right {
+    margin-left: auto;
+    display: flex; align-items: center; gap: 16px;
+  }
+  .topbar-action {
+    background: var(--accent-soft);
+    color: var(--accent);
+    border: 1px solid var(--accent-line);
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-size: 12px; font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .topbar-action:hover:not(:disabled) {
+    background: rgba(138,155,240,0.18);
+  }
+  .topbar-action:disabled {
+    background: var(--panel-2);
+    color: var(--text-3);
+    border-color: var(--border);
+    cursor: wait;
+  }
+  .topbar-action.subtle {
+    background: transparent; color: var(--text-3);
+    border-color: var(--border); font-weight: 500;
+  }
+  .topbar-action.subtle:hover:not(:disabled) {
+    background: var(--panel-2); color: var(--text-2);
+  }
+  .topbar-action.success {
+    background: rgba(110,195,139,0.12);
+    color: var(--good);
+    border-color: rgba(110,195,139,0.35);
+  }
+  .topbar-action.error {
+    background: rgba(226,107,115,0.10);
+    color: var(--bad);
+    border-color: rgba(226,107,115,0.35);
+  }
+  .topbar .live {
+    display: flex; align-items: center; gap: 8px;
+    color: var(--text-2); font-size: 12px;
+  }
+  .live .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--good); animation: pulse 1.6s ease-in-out infinite;
+  }
+  .live.stale .dot { background: var(--text-3); animation: none; }
+  @keyframes pulse {
+    0%,100% { opacity: 1; transform: scale(1); }
+    50%     { opacity: 0.4; transform: scale(0.85); }
+  }
+
+  .layout {
+    display: grid;
+    grid-template-columns: 300px 1fr 1.2fr;
+    height: calc(100vh - 48px);
+    min-height: 0;
+  }
+  .col {
+    border-right: 1px solid var(--border);
+    overflow-y: auto;
+    min-height: 0;
+  }
+  .col:last-child { border-right: none; }
+  .col-header {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+    position: sticky; top: 0; z-index: 1;
+    font-size: 11px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.5px;
+    color: var(--text-3);
+  }
+  .col-header .count { color: var(--accent); font-weight: 600; }
+
+  /* timeline — session > turn > call hierarchy */
+  .timeline { list-style: none; margin: 0; padding: 0; }
+  .session-header {
+    padding: 12px 16px 8px;
+    border-top: 1px solid var(--border);
+    background: rgba(0,0,0,0.18);
+  }
+  .session-header:first-child { border-top: none; }
+  .session-header .session-line {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 10px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.5px;
+    color: var(--text-3); margin-bottom: 4px;
+  }
+  .session-header .sid {
+    font-family: "SF Mono", ui-monospace, monospace;
+    letter-spacing: 0; text-transform: none;
+    color: var(--text-3); font-weight: 500;
+    opacity: 0.6;
+  }
+  .session-header .badge-snapshot {
+    background: rgba(212,154,106,0.10);
+    color: #d49a6a;
+    border: 1px solid rgba(212,154,106,0.30);
+    padding: 1px 6px; border-radius: 9px;
+    font-size: 9px; font-weight: 600;
+    letter-spacing: 0.4px;
+  }
+  .session-name {
+    color: var(--text); font-size: 13px; font-weight: 600;
+    line-height: 1.35; cursor: text;
+    padding: 2px 4px; margin: -2px -4px;
+    border-radius: 4px;
+    overflow: hidden; text-overflow: ellipsis;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  }
+  .session-name:hover {
+    background: rgba(255,255,255,0.04);
+    outline: 1px dashed var(--border);
+  }
+  .session-name[contenteditable="true"] {
+    background: var(--code-bg); outline: 1px solid var(--accent-line);
+    cursor: text; -webkit-line-clamp: unset; display: block;
+  }
+  .session-name .when {
+    color: var(--text-3); font-weight: 500; font-family: "SF Mono", ui-monospace, monospace;
+    font-size: 11.5px; margin-right: 6px;
+  }
+  .turn-group { border-bottom: 1px solid var(--border); }
+  .turn-header {
+    padding: 8px 16px; cursor: pointer;
+    display: flex; flex-direction: column; gap: 2px;
+    user-select: none;
+  }
+  .turn-header:hover { background: var(--panel-2); }
+  .turn-header .turn-title {
+    font-weight: 700; color: var(--text); font-size: 12.5px;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .turn-header .turn-title::before {
+    content: "▾"; color: var(--text-3); font-size: 10px;
+    transition: transform 0.15s;
+  }
+  .turn-group.collapsed .turn-header .turn-title::before {
+    transform: rotate(-90deg);
+  }
+  .turn-header .turn-preview {
+    color: var(--text-2); font-size: 12px;
+    line-height: 1.4;
+    overflow: hidden; text-overflow: ellipsis;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    padding-left: 16px;
+  }
+  .turn-header .turn-meta {
+    color: var(--text-3); font-size: 10.5px; margin-top: 2px;
+    padding-left: 16px;
+  }
+  .turn-calls { list-style: none; margin: 0; padding: 0 0 6px; }
+  .turn-group.collapsed .turn-calls { display: none; }
+  .call-row {
+    padding: 6px 16px 6px 32px;
+    cursor: pointer;
+    display: flex; align-items: center; gap: 8px;
+    border-left: 2px solid transparent;
+    font-size: 12px;
+  }
+  .call-row:hover { background: var(--panel-2); }
+  .call-row.active {
+    background: var(--accent-soft);
+    border-left-color: var(--accent);
+  }
+  .call-row .call-num {
+    font-family: "SF Mono", ui-monospace, monospace;
+    color: var(--text-3); font-size: 11px;
+    min-width: 36px;
+  }
+  .call-row .call-label {
+    flex: 1;
+    color: var(--text-2);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .call-row .call-label .tool {
+    color: #d49a6a;  /* same as tool_use accent in messages */
+    font-family: "SF Mono", ui-monospace, monospace;
+    font-size: 11px;
+  }
+  .call-row .call-label.final { color: var(--good); }
+  .call-row .call-label.in-flight { color: var(--text-3); font-style: italic; }
+
+  /* panes */
+  .pane { padding: 16px 18px; }
+  .pane h2 {
+    font-size: 11px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.5px;
+    color: var(--text-3);
+    margin: 18px 0 10px;
+  }
+  .pane h2:first-child { margin-top: 0; }
+  .pane .sub { color: var(--text-3); font-size: 12px; margin-bottom: 10px; }
+
+  .empty {
+    padding: 48px 24px; text-align: center;
+    color: var(--text-3); font-size: 13px;
+  }
+  .empty code {
+    display: block; margin-top: 12px;
+    background: var(--code-bg); padding: 10px 14px;
+    border: 1px solid var(--border); border-radius: 6px;
+    color: var(--text); white-space: pre-wrap;
+    font-size: 12px;
+  }
+
+  /* welcome / empty session state — covers center + right panes when no taps yet */
+  .welcome {
+    grid-column: 2 / span 2;
+    padding: 48px 56px; max-width: 720px; margin: 0 auto;
+    overflow-y: auto;
+  }
+  .welcome .ready-banner {
+    display: flex; align-items: center; gap: 10px;
+    padding: 12px 16px; margin-bottom: 28px;
+    background: rgba(110, 195, 139, 0.08);
+    border: 1px solid rgba(110, 195, 139, 0.25);
+    border-radius: 8px;
+    font-size: 13px; color: var(--text);
+  }
+  .welcome .ready-banner .dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: var(--good); animation: pulse 1.6s ease-in-out infinite;
+    flex-shrink: 0;
+  }
+  .welcome h2 {
+    font-size: 22px; font-weight: 700; margin: 0 0 8px;
+    letter-spacing: -0.3px;
+  }
+  .welcome > p {
+    color: var(--text-2); font-size: 14px; line-height: 1.6;
+    margin: 0 0 28px;
+  }
+  .welcome-step {
+    display: flex; gap: 14px; margin-bottom: 18px;
+    align-items: flex-start;
+  }
+  .welcome-step .step-num {
+    width: 26px; height: 26px; border-radius: 50%;
+    background: var(--accent-soft); border: 1px solid var(--accent-line);
+    color: var(--accent); font-weight: 700; font-size: 12px;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0; margin-top: 1px;
+  }
+  .welcome-step .step-body {
+    flex: 1; font-size: 13.5px; line-height: 1.55;
+    color: var(--text-2);
+  }
+  .welcome-step .step-body strong {
+    display: block; color: var(--text); margin-bottom: 4px;
+    font-weight: 600;
+  }
+  .welcome-step pre {
+    background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: 6px; padding: 10px 14px; margin: 8px 0 0;
+    font-size: 12.5px; color: var(--text);
+    white-space: pre-wrap; overflow-wrap: anywhere;
+  }
+  .welcome h2:not(:first-of-type) {
+    margin-top: 28px;
+  }
+  .welcome-action {
+    display: flex; align-items: center; gap: 14px;
+    margin: 4px 0 8px;
+  }
+  .welcome-action button {
+    background: var(--accent); color: #0e1014;
+    border: 0; border-radius: 6px;
+    padding: 10px 16px; font-size: 13.5px; font-weight: 700;
+    cursor: pointer; transition: background 0.15s;
+  }
+  .welcome-action button:hover:not(:disabled) { background: #a8b6f5; }
+  .welcome-action button:disabled {
+    background: var(--panel-2); color: var(--text-3); cursor: wait;
+  }
+  .welcome-status {
+    color: var(--text-2); font-size: 12.5px;
+  }
+  .welcome-status.error { color: var(--bad); }
+  .welcome-status.ok { color: var(--good); }
+  .welcome-cmd {
+    background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: 6px; padding: 12px 16px; margin: 4px 0 8px;
+    font-size: 12.5px; color: var(--text);
+    white-space: pre-wrap; overflow-wrap: anywhere;
+  }
+  .welcome-troubleshoot {
+    margin-top: 28px; padding-top: 20px;
+    border-top: 1px solid var(--border);
+    font-size: 12.5px;
+  }
+  .welcome-troubleshoot summary {
+    cursor: pointer; color: var(--text-2); padding: 4px 0;
+  }
+  .welcome-troubleshoot summary:hover { color: var(--text); }
+  .welcome-troubleshoot ul {
+    list-style: none; padding: 0; margin: 12px 0 0;
+  }
+  .welcome-troubleshoot li {
+    padding: 6px 0; color: var(--text-3);
+    border-bottom: 1px dashed var(--border);
+  }
+  .welcome-troubleshoot li:last-child { border-bottom: none; }
+  .welcome-troubleshoot code {
+    background: var(--code-bg); padding: 2px 6px;
+    border-radius: 3px; color: var(--text-2);
+    font-size: 11.5px;
+  }
+
+  /* tool list */
+  .tool-card {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 6px; margin-bottom: 8px;
+  }
+  .tool-card summary {
+    padding: 10px 14px; cursor: pointer;
+    display: flex; align-items: center; gap: 10px;
+    list-style: none;
+  }
+  .tool-card summary::-webkit-details-marker { display: none; }
+  .tool-card summary::before {
+    content: "▸"; color: var(--text-3); font-size: 10px;
+    width: 10px; flex-shrink: 0;
+  }
+  .tool-card[open] summary::before { content: "▾"; }
+  .tool-card .tname {
+    font-family: "SF Mono", ui-monospace, monospace;
+    font-weight: 600; font-size: 12.5px;
+  }
+  .tool-card .tinfo {
+    margin-left: auto; color: var(--text-3); font-size: 11px;
+  }
+  .tool-card .tbody {
+    border-top: 1px solid var(--border);
+    padding: 12px 14px;
+  }
+  .tool-card .tlabel {
+    font-size: 10.5px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.5px;
+    color: var(--text-3); margin: 12px 0 4px;
+  }
+  .tool-card .tlabel:first-child { margin-top: 0; }
+  .tool-card pre {
+    background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: 4px; padding: 10px 12px; margin: 0;
+    font-size: 11.5px; line-height: 1.55;
+    white-space: pre-wrap; overflow-wrap: anywhere;
+    color: var(--text-2); max-height: 600px; overflow-y: auto;
+  }
+
+  /* collapsible static-content section in envelope pane */
+  .static-section {
+    border: 1px solid var(--border); border-radius: 6px;
+    margin-bottom: 10px; background: var(--panel);
+  }
+  .static-section > summary {
+    padding: 10px 14px; cursor: pointer;
+    display: flex; align-items: center; gap: 8px;
+    list-style: none;
+    font-size: 12.5px;
+  }
+  .static-section > summary::-webkit-details-marker { display: none; }
+  .static-section > summary::before {
+    content: "▸"; color: var(--text-3); font-size: 10px; width: 12px;
+  }
+  .static-section[open] > summary::before { content: "▾"; }
+  .static-section > summary .title {
+    font-weight: 700; color: var(--text);
+  }
+  .static-section > summary .meta {
+    margin-left: auto; color: var(--text-3); font-size: 11.5px;
+  }
+  .static-section > summary .change-badge {
+    background: rgba(110,195,139,0.12);
+    color: var(--good); border: 1px solid rgba(110,195,139,0.35);
+    padding: 1px 7px; border-radius: 9px;
+    font-size: 10px; font-weight: 600;
+  }
+  .static-section > .body {
+    padding: 0 14px 14px; border-top: 1px solid var(--border);
+  }
+
+  /* messages */
+  .msg {
+    margin-bottom: 10px;
+    border-left: 2px solid var(--border);
+    padding-left: 12px;
+    transition: background 0.2s;
+  }
+  .msg.is-new {
+    border-left-color: var(--good);
+    background: rgba(110,195,139,0.06);
+    border-radius: 0 6px 6px 0;
+    padding: 8px 8px 8px 12px;
+    margin-left: -2px;
+  }
+  .new-divider {
+    display: flex; align-items: center; gap: 10px;
+    margin: 16px 0 10px;
+    color: var(--good); font-size: 10.5px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.6px;
+  }
+  .new-divider::before, .new-divider::after {
+    content: ""; flex: 1; height: 1px; background: rgba(110,195,139,0.30);
+  }
+
+  /* framed-block: collapse <system-reminder> / <command-message> blocks
+     so the actual user content is visible without scrolling past noise */
+  details.framed-block {
+    background: rgba(0,0,0,0.18); border: 1px dashed var(--border);
+    border-radius: 4px; margin: 4px 0;
+    font-size: 11.5px;
+  }
+  details.framed-block > summary {
+    padding: 6px 10px; cursor: pointer;
+    list-style: none;
+    display: flex; align-items: center; gap: 10px;
+    color: var(--text-3);
+  }
+  details.framed-block > summary::-webkit-details-marker { display: none; }
+  details.framed-block > summary::before {
+    content: "▸"; font-size: 9px; width: 9px;
+  }
+  details.framed-block[open] > summary::before { content: "▾"; }
+  details.framed-block .frame-tag {
+    font-family: "SF Mono", ui-monospace, monospace;
+    color: var(--text-2); font-weight: 600;
+  }
+  details.framed-block .frame-meta {
+    color: var(--text-3); font-size: 10.5px;
+  }
+  details.framed-block .frame-preview {
+    color: var(--text-3); font-style: italic;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    flex: 1; min-width: 0;
+  }
+  details.framed-block > pre {
+    margin: 0; border-radius: 0 0 4px 4px;
+    border: none; border-top: 1px dashed var(--border);
+    max-height: 400px;
+  }
+  .msg.user      { border-left-color: var(--accent); }
+  .msg.assistant { border-left-color: var(--text-2); }
+  .msg .role {
+    font-size: 10.5px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.5px;
+    color: var(--text-3); margin-bottom: 4px; display: block;
+  }
+  .msg.user .role { color: var(--accent); }
+  .msg pre {
+    background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: 4px; padding: 10px 12px; margin: 4px 0;
+    font-size: 11.5px; line-height: 1.55;
+    white-space: pre-wrap; overflow-wrap: anywhere;
+    color: var(--text);
+    max-height: 320px; overflow-y: auto;
+  }
+  .msg .blk-label {
+    font-size: 10px; font-weight: 700; color: var(--text-3);
+    text-transform: uppercase; letter-spacing: 0.5px;
+    margin: 6px 0 2px;
+  }
+  .msg .blk-tool-use { color: #d49a6a; }
+  .msg .blk-tool-result { color: #6ec38b; }
+
+  /* system prompt */
+  .sysblk {
+    background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: 6px; padding: 12px 14px; margin-bottom: 12px;
+    font-size: 12px; line-height: 1.6;
+    white-space: pre-wrap; overflow-wrap: anywhere;
+    max-height: 400px; overflow-y: auto;
+  }
+  .sysblk-meta {
+    font-size: 11px; color: var(--text-3); margin-bottom: 6px;
+  }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>monitor-claude-code</h1>
+  <span class="subtitle">verbatim wire view of every Claude Code API request</span>
+  <div class="topbar-right">
+    <button id="topbar-capture" type="button" class="topbar-action" title="Spawn one `claude -p ping` through the proxy and capture the envelope (~3–10s, ~$0.001)">+ Capture snapshot</button>
+    <button id="topbar-clear" type="button" class="topbar-action subtle" title="Delete every captured tap from disk. Useful for clearing old test data before starting a real monitoring session.">Clear all</button>
+    <div class="live" id="live"><span class="dot"></span><span id="live-text">live</span></div>
+  </div>
+</div>
+
+<div class="layout">
+  <div class="col" id="col-timeline">
+    <div class="col-header">Captured · <span class="count" id="tap-count">0</span></div>
+    <ul class="timeline" id="timeline"></ul>
+  </div>
+
+  <div class="col" id="col-envelope" hidden>
+    <div class="col-header">Prompt envelope · <span id="env-meta">—</span></div>
+    <div class="pane" id="envelope-pane"></div>
+  </div>
+
+  <div class="col" id="col-messages" hidden>
+    <div class="col-header">Messages · <span id="msg-meta">—</span></div>
+    <div class="pane" id="messages-pane"></div>
+  </div>
+
+  <div class="welcome" id="welcome">
+    <div class="ready-banner">
+      <span class="dot"></span>
+      <div>
+        <strong>Proxy is up</strong> — listening on <code>http://127.0.0.1:9999</code>. No traffic captured yet.
+      </div>
+    </div>
+
+    <h2>Why is this page empty?</h2>
+    <p>The proxy is a <strong>wire tap</strong> — it can only see API requests that <em>physically travel through it</em>. The Claude session you're currently chatting in was started without <code>ANTHROPIC_BASE_URL</code> set, so its requests go directly from <code>claude</code> → <code>api.anthropic.com</code>; they never touch port 9999. The proxy literally has no way to read them. Only Claude processes started <em>through</em> the proxy can be tapped.</p>
+
+    <h2>Fastest way to see something now</h2>
+    <p>Click the button below and the proxy will spawn a single <code>claude -p "ping"</code> subprocess with itself wired up as the upstream. That fires exactly one API request through the proxy, captures the full envelope (system prompt, every tool's verbatim description and <code>input_schema</code>, your message, Claude's response), and exits. Cost: about $0.001 in tokens, ~3 seconds.</p>
+
+    <div class="welcome-action">
+      <button id="snapshot-btn" type="button">Capture a snapshot now →</button>
+      <div class="welcome-status" id="snapshot-status"></div>
+    </div>
+
+    <h2>Or capture an interactive session yourself</h2>
+    <p>If you want to watch a real session live, start one through the proxy from any terminal:</p>
+<pre class="welcome-cmd">ANTHROPIC_BASE_URL=http://127.0.0.1:9999 claude</pre>
+    <p>Every request that session makes will appear here within ~2 seconds, with full envelope verbatim. Use this to verify what Claude Code is sending the model, audit tool descriptions against published docs, or watch how the prompt changes turn-by-turn.</p>
+
+    <div class="welcome-troubleshoot">
+      <details>
+        <summary>Still not seeing anything? Click to debug.</summary>
+        <ul>
+          <li>From any terminal: <code>curl -s http://127.0.0.1:9999/api/taps</code> should return <code>[]</code> (or a list once you've routed a request through). If it errors, the proxy isn't running.</li>
+          <li>In the new shell where you ran <code>claude</code>: <code>echo $ANTHROPIC_BASE_URL</code> should print <code>http://127.0.0.1:9999</code>. If it's empty, the env var didn't propagate.</li>
+          <li>Tail the proxy log for incoming POSTs: <code>tail -f /tmp/monitor-claude-code-9999.log</code>. You should see <code>"POST /v1/messages HTTP/1.1" 200</code> lines as you chat.</li>
+          <li>List what the proxy has saved: <code>ls ~/.claude/skills/monitor-claude-code/taps/</code>.</li>
+        </ul>
+      </details>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+const POLL_MS = 1500;
+
+let taps = [];               // [{name, seq, size, mtime, session_id, turn_number, turn_preview, n_messages, produced}]
+let currentName = null;      // selected tap filename
+let currentData = null;      // its fetched body
+let previousData = null;     // previous tap in same session+turn (for new-message highlighting)
+let lastFetchOk = 0;
+let collapsedTurns = new Set();  // turn keys the user has manually collapsed
+
+const $ = (id) => document.getElementById(id);
+
+async function fetchTaps() {
+  try {
+    const r = await fetch("/api/taps");
+    if (!r.ok) throw new Error("list failed");
+    const list = await r.json();
+    lastFetchOk = Date.now();
+    if (JSON.stringify(list) !== JSON.stringify(taps)) {
+      taps = list;
+      renderTimeline();
+      toggleWelcome();
+      // If nothing was selected and we just got our first tap, auto-pick newest.
+      if (!currentName && taps.length > 0) {
+        await selectTap(taps[0].name);
+      } else if (currentName && !taps.find(t => t.name === currentName)) {
+        // Selected tap got deleted; fall through to newest.
+        if (taps.length > 0) await selectTap(taps[0].name);
+        else clearPanes();
+      }
+    }
+  } catch (e) {
+    // network blip; keep last UI state
+  }
+  updateLive();
+}
+
+function toggleWelcome() {
+  const showWelcome = taps.length === 0;
+  $("welcome").hidden = !showWelcome;
+  $("col-envelope").hidden = showWelcome;
+  $("col-messages").hidden = showWelcome;
+}
+
+async function selectTap(name) {
+  currentName = name;
+  // Compute the previous tap in the same session+turn (for highlighting new content).
+  const idx = taps.findIndex(t => t.name === name);
+  const cur = idx >= 0 ? taps[idx] : null;
+  // taps[] is descending (newest first); the "previous tap in same session+turn"
+  // is the next index (one older) provided it matches session_id + turn_number.
+  let prevTap = null;
+  if (cur && idx + 1 < taps.length) {
+    const candidate = taps[idx + 1];
+    if (candidate.session_id === cur.session_id && candidate.turn_number === cur.turn_number) {
+      prevTap = candidate;
+    }
+  }
+  try {
+    const r = await fetch("/api/taps/" + encodeURIComponent(name));
+    if (!r.ok) throw new Error("fetch failed");
+    currentData = await r.json();
+    // Fetch previous tap for diff comparison (skip if no previous in same turn).
+    if (prevTap) {
+      try {
+        const pr = await fetch("/api/taps/" + encodeURIComponent(prevTap.name));
+        previousData = pr.ok ? await pr.json() : null;
+      } catch (e) { previousData = null; }
+    } else {
+      previousData = null;
+    }
+    renderEnvelope();
+    renderMessages();
+    renderTimeline(); // re-render to update active highlight
+    // Position scroll so the most relevant content is visible without scrolling:
+    //   • If there's a "new in this call" divider, scroll it to the top of the pane
+    //   • Otherwise (first call of turn), scroll to the top so the user message is visible
+    const mp = $("messages-pane");
+    const col = mp ? mp.parentElement : null;
+    if (col) {
+      const divider = col.querySelector(".new-divider");
+      if (divider) {
+        // Position the divider just below the sticky col-header. We use
+        // getBoundingClientRect deltas rather than offsetTop because .col is
+        // not a positioned ancestor — offsetTop on the divider would be
+        // relative to body, giving a value that's clamped to scrollHeight.
+        const dRect = divider.getBoundingClientRect();
+        const cRect = col.getBoundingClientRect();
+        // Account for the sticky col-header (~46px) plus a little breathing room.
+        col.scrollTop += dRect.top - cRect.top - 56;
+      } else {
+        col.scrollTop = 0;
+      }
+    }
+  } catch (e) {
+    console.warn("selectTap", e);
+  }
+}
+
+function renderTimeline() {
+  const ul = $("timeline");
+  $("tap-count").textContent = taps.length;
+  ul.innerHTML = "";
+
+  // taps is descending (newest first). Group by session_id, preserving order;
+  // within each session, group by turn_number.
+  // Within each turn, list calls in ASCENDING seq (so the user reads top-down
+  // as Call 1 → Call 2 → ...).
+  const sessions = []; // [{session_id, turns: [{turn_number, turn_preview, calls: [tap, ...]}]}]
+  const sessionIdx = new Map();
+  for (const t of taps) {
+    const sk = t.session_id || "(no-session)";
+    let s = sessionIdx.get(sk);
+    if (!s) {
+      s = {session_id: t.session_id, turns: [], turnIdx: new Map()};
+      sessionIdx.set(sk, s);
+      sessions.push(s);
+    }
+    const tk = t.turn_number;
+    let turn = s.turnIdx.get(tk);
+    if (!turn) {
+      turn = {turn_number: tk, turn_preview: t.turn_preview, calls: []};
+      s.turnIdx.set(tk, turn);
+      s.turns.push(turn);
+    }
+    turn.calls.push(t);
+  }
+  // Within each turn, sort calls ascending by seq (oldest first → top).
+  for (const s of sessions) for (const turn of s.turns) {
+    turn.calls.sort((a, b) => a.seq - b.seq);
+  }
+
+  // Always render session header — even with one session, the user benefits
+  // from seeing what session this is (start time, first message, hash).
+  for (const s of sessions) {
+    {
+      const firstTap = s.turns[0]?.calls[0];
+      const startTime = firstTap ? new Date(firstTap.mtime * 1000) : null;
+      const hhmm = startTime
+        ? String(startTime.getHours()).padStart(2, "0") + ":" + String(startTime.getMinutes()).padStart(2, "0")
+        : "??:??";
+      const firstMsg = (firstTap?.session_first_message || "(no first message)").trim();
+      const short = s.session_id ? s.session_id.slice(0, 8) : "no-session";
+      // Look up custom name from localStorage; fall back to first-message preview.
+      const customKey = "mp.sessionName." + (s.session_id || "no-session");
+      const customName = localStorage.getItem(customKey);
+      const displayName = customName !== null
+        ? customName
+        : (firstMsg ? `"${firstMsg}"` : "(unnamed)");
+      // Detect if this session was generated by the snapshot button (single
+      // tap, prompt is exactly "ping").
+      const isSnapshot = s.turns.length === 1 && s.turns[0].calls.length === 1 && firstMsg === "ping";
+
+      const hdr = document.createElement("li");
+      hdr.className = "session-header";
+      hdr.innerHTML = `
+        <div class="session-line">
+          <span>Session</span>
+          <span class="sid">${escapeHtml(short)}</span>
+          ${isSnapshot ? '<span class="badge-snapshot">snapshot</span>' : ''}
+        </div>
+        <div class="session-name" data-session-id="${escapeHtml(s.session_id || '')}" title="Click to rename">
+          <span class="when">${hhmm}</span>${escapeHtml(displayName)}
+        </div>
+      `;
+      // Inline rename: click to make editable, blur or Enter to save.
+      const nameEl = hdr.querySelector(".session-name");
+      nameEl.addEventListener("click", (e) => {
+        if (nameEl.getAttribute("contenteditable") === "true") return;
+        nameEl.setAttribute("contenteditable", "true");
+        // Replace the rendered content with raw text so editing is sane.
+        nameEl.textContent = displayName;
+        // Select all on edit start.
+        const range = document.createRange();
+        range.selectNodeContents(nameEl);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        nameEl.focus();
+      });
+      const finish = () => {
+        if (nameEl.getAttribute("contenteditable") !== "true") return;
+        nameEl.removeAttribute("contenteditable");
+        const newName = nameEl.textContent.trim();
+        if (newName && newName !== displayName) {
+          localStorage.setItem(customKey, newName);
+        } else if (!newName) {
+          // Empty → revert to default.
+          localStorage.removeItem(customKey);
+        }
+        renderTimeline(); // re-render to apply
+      };
+      nameEl.addEventListener("blur", finish);
+      nameEl.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") { e.preventDefault(); nameEl.blur(); }
+        if (e.key === "Escape") { e.preventDefault(); nameEl.removeAttribute("contenteditable"); renderTimeline(); }
+      });
+      ul.appendChild(hdr);
+    }
+    for (const turn of s.turns) {
+      const turnKey = `${s.session_id || ""}::${turn.turn_number}`;
+      const isCollapsed = collapsedTurns.has(turnKey);
+      const grp = document.createElement("li");
+      grp.className = "turn-group" + (isCollapsed ? " collapsed" : "");
+      const callCount = turn.calls.length;
+      const callWord = callCount === 1 ? "call" : "calls";
+      grp.innerHTML = `
+        <div class="turn-header">
+          <div class="turn-title">Turn ${turn.turn_number}</div>
+          <div class="turn-preview">${escapeHtml(turn.turn_preview || "(no preview)")}</div>
+          <div class="turn-meta">${callCount} ${callWord}</div>
+        </div>
+        <ul class="turn-calls"></ul>
+      `;
+      grp.querySelector(".turn-header").addEventListener("click", () => {
+        if (collapsedTurns.has(turnKey)) collapsedTurns.delete(turnKey);
+        else collapsedTurns.add(turnKey);
+        renderTimeline();
+      });
+      const callsUl = grp.querySelector(".turn-calls");
+      turn.calls.forEach((tap, callIdx) => {
+        const row = document.createElement("li");
+        row.className = "call-row" + (tap.name === currentName ? " active" : "");
+        row.innerHTML = `
+          <span class="call-num">#${String(tap.seq).padStart(3, "0")}</span>
+          <span class="call-label">${labelForCall(tap, callIdx, turn.calls.length)}</span>
+        `;
+        row.addEventListener("click", (e) => {
+          e.stopPropagation();
+          selectTap(tap.name);
+        });
+        callsUl.appendChild(row);
+      });
+      ul.appendChild(grp);
+    }
+  }
+}
+
+function labelForCall(tap, callIdx, totalCalls) {
+  // Use server-inferred 'produced' to label what this call accomplished.
+  const p = tap.produced;
+  if (!p) {
+    if (callIdx === totalCalls - 1) {
+      // Latest call in the turn — we can't infer because there's no next tap.
+      return `<span class="in-flight">in flight…</span>`;
+    }
+    return `Call ${callIdx + 1}`;
+  }
+  if (p.type === "tool_use") {
+    const tools = (p.tools || []).map(t => `<span class="tool">${escapeHtml(t)}</span>`).join(" + ");
+    return `→ ${tools}`;
+  }
+  if (p.type === "text_final") {
+    return `<span class="final">→ final response</span>`;
+  }
+  if (p.type === "text") return `→ text response`;
+  if (p.type === "thinking") return `→ thinking`;
+  return `Call ${callIdx + 1}`;
+}
+
+function renderEnvelope() {
+  const pane = $("envelope-pane");
+  const meta = $("env-meta");
+  if (!currentData || !currentData.request) {
+    pane.innerHTML = '<div class="empty">No request body in this tap.</div>';
+    meta.textContent = "—";
+    return;
+  }
+  const req = currentData.request;
+  const tools = Array.isArray(req.tools) ? req.tools : [];
+  const sys = req.system;
+  const sysLen = sys == null ? 0 : (typeof sys === "string" ? sys.length : JSON.stringify(sys).length);
+  meta.textContent = `${tools.length} tools · ${sysLen.toLocaleString()} char system`;
+
+  // Detect what changed vs previousData (within-turn diff).
+  const prevReq = previousData?.request;
+  const prevTools = Array.isArray(prevReq?.tools) ? prevReq.tools : null;
+  const prevSysLen = prevReq?.system == null ? null
+    : (typeof prevReq.system === "string" ? prevReq.system.length : JSON.stringify(prevReq.system).length);
+  const sysChanged = prevReq && prevSysLen !== sysLen;
+  const toolsChanged = prevTools && (
+    prevTools.length !== tools.length ||
+    prevTools.map(t => t.name).join("|") !== tools.map(t => t.name).join("|")
+  );
+
+  const parts = [];
+
+  // Model + meta header
+  const headerBits = [];
+  if (req.model) headerBits.push(`model: <code>${escapeHtml(req.model)}</code>`);
+  if (req.max_tokens) headerBits.push(`max_tokens: ${req.max_tokens}`);
+  if (req.temperature != null) headerBits.push(`temp: ${req.temperature}`);
+  if (req.stream) headerBits.push(`stream: true`);
+  if (headerBits.length) {
+    parts.push(`<div class="sub">${headerBits.join(" · ")}</div>`);
+  }
+
+  // System prompt — collapsed by default, badge if changed since previous tap.
+  const sysOpen = sysChanged ? " open" : "";
+  const sysBadge = sysChanged
+    ? `<span class="change-badge">changed</span>`
+    : (prevReq ? `<span class="meta">unchanged</span>` : "");
+  let sysBody = "";
+  if (sys == null) {
+    sysBody = `<div class="sub" style="padding-top:10px;">none</div>`;
+  } else if (typeof sys === "string") {
+    sysBody = `<div class="sysblk-meta" style="padding-top:10px;">${sys.length.toLocaleString()} chars</div>
+               <div class="sysblk">${escapeHtml(sys)}</div>`;
+  } else if (Array.isArray(sys)) {
+    let blocks = "";
+    for (const blk of sys) {
+      const text = typeof blk === "string" ? blk : (blk.text != null ? blk.text : JSON.stringify(blk));
+      blocks += `<div class="sysblk">${escapeHtml(text)}</div>`;
+    }
+    sysBody = `<div class="sysblk-meta" style="padding-top:10px;">${sys.length} blocks</div>${blocks}`;
+  } else {
+    sysBody = `<div class="sysblk">${escapeHtml(JSON.stringify(sys, null, 2))}</div>`;
+  }
+  parts.push(`
+    <details class="static-section"${sysOpen}>
+      <summary>
+        <span class="title">System prompt</span>
+        ${sysBadge}
+        <span class="meta">${sysLen.toLocaleString()} chars</span>
+      </summary>
+      <div class="body">${sysBody}</div>
+    </details>
+  `);
+
+  // Tools — collapsed by default, badge if changed.
+  const toolsOpen = toolsChanged ? " open" : "";
+  const toolsBadge = toolsChanged
+    ? `<span class="change-badge">changed</span>`
+    : (prevTools ? `<span class="meta">unchanged</span>` : "");
+  let toolsBody = tools.length === 0
+    ? `<div class="sub" style="padding-top:10px;">no tools sent</div>`
+    : tools.map(renderToolCard).join("\n");
+  parts.push(`
+    <details class="static-section"${toolsOpen}>
+      <summary>
+        <span class="title">Tools</span>
+        ${toolsBadge}
+        <span class="meta">${tools.length}</span>
+      </summary>
+      <div class="body" style="padding-top:12px;">${toolsBody}</div>
+    </details>
+  `);
+
+  pane.innerHTML = parts.join("\n");
+}
+
+function renderToolCard(tool) {
+  const name = tool.name || "(unnamed)";
+  const desc = tool.description != null ? String(tool.description) : "";
+  const schema = tool.input_schema != null ? tool.input_schema : tool.parameters;
+  const props = (schema && schema.properties) ? Object.keys(schema.properties).length : 0;
+  const required = (schema && Array.isArray(schema.required)) ? schema.required.length : 0;
+  const descLen = desc.length;
+  const info = `${descLen.toLocaleString()} char desc · ${props} params${required ? ` (${required} req)` : ""}`;
+
+  return `
+    <details class="tool-card">
+      <summary>
+        <span class="tname">${escapeHtml(name)}</span>
+        <span class="tinfo">${info}</span>
+      </summary>
+      <div class="tbody">
+        <div class="tlabel">Description (verbatim, ${descLen} chars)</div>
+        <pre>${escapeHtml(desc)}</pre>
+        <div class="tlabel">Input schema (verbatim)</div>
+        <pre>${escapeHtml(JSON.stringify(schema, null, 2))}</pre>
+      </div>
+    </details>
+  `;
+}
+
+function renderMessages() {
+  const pane = $("messages-pane");
+  const meta = $("msg-meta");
+  if (!currentData || !currentData.request) {
+    pane.innerHTML = '<div class="empty">No request body.</div>';
+    meta.textContent = "—";
+    return;
+  }
+  const messages = Array.isArray(currentData.request.messages) ? currentData.request.messages : [];
+  const prevMessages = Array.isArray(previousData?.request?.messages) ? previousData.request.messages : null;
+  // Index from which messages are NEW relative to the previous tap in this turn.
+  // If no previous tap (first call of turn or no diff available), treat all as "not new"
+  // — there's nothing to compare against, so we shouldn't shout "everything new" at the user.
+  const newFromIdx = prevMessages ? prevMessages.length : -1;
+  const newCount = newFromIdx >= 0 ? Math.max(0, messages.length - newFromIdx) : 0;
+
+  const metaBits = [`${messages.length} messages`];
+  if (newCount > 0) metaBits.push(`<span style="color:var(--good);">+${newCount} new</span>`);
+  meta.innerHTML = metaBits.join(" · ");
+
+  if (messages.length === 0) {
+    pane.innerHTML = '<div class="empty">No messages in this turn.</div>';
+    return;
+  }
+
+  const parts = [];
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+    const role = msg.role || "?";
+    const cls = role === "user" ? "user" : role === "assistant" ? "assistant" : "";
+    const isNew = newFromIdx >= 0 && i >= newFromIdx;
+    if (isNew && i === newFromIdx) {
+      parts.push(`<div class="new-divider">new in this call</div>`);
+    }
+    parts.push(`<div class="msg ${cls}${isNew ? " is-new" : ""}"><span class="role">${escapeHtml(role)}</span>`);
+    if (typeof msg.content === "string") {
+      parts.push(`<pre>${escapeHtml(msg.content)}</pre>`);
+    } else if (Array.isArray(msg.content)) {
+      for (const blk of msg.content) {
+        parts.push(renderBlock(blk));
+      }
+    }
+    parts.push("</div>");
+  }
+  pane.innerHTML = parts.join("\n");
+}
+
+function renderBlock(blk) {
+  if (!blk || typeof blk !== "object") {
+    return `<pre>${escapeHtml(String(blk))}</pre>`;
+  }
+  const t = blk.type;
+  if (t === "text") {
+    const text = blk.text || "";
+    const trimmed = text.trimStart();
+    // Collapse framing blocks (system-reminder, command-message, command-name)
+    // so they don't drown the actual user content. Show a one-line summary;
+    // user clicks to expand.
+    const frameTags = [
+      ["<system-reminder>", "</system-reminder>", "system-reminder"],
+      ["<command-message>", "</command-message>", "command-message"],
+      ["<command-name>", "</command-name>", "command-name"],
+    ];
+    for (const [open, close, label] of frameTags) {
+      if (trimmed.startsWith(open)) {
+        // Pull a brief 1-line preview from inside the tag.
+        const innerStart = trimmed.indexOf(open) + open.length;
+        const innerEnd = trimmed.indexOf(close);
+        const inner = innerEnd > innerStart ? trimmed.slice(innerStart, innerEnd) : trimmed.slice(innerStart);
+        const preview = inner.replace(/\s+/g, " ").trim().slice(0, 100);
+        return `
+          <details class="framed-block">
+            <summary><span class="frame-tag">&lt;${label}&gt;</span><span class="frame-meta">${text.length.toLocaleString()} chars</span><span class="frame-preview">${escapeHtml(preview)}${preview.length >= 100 ? "…" : ""}</span></summary>
+            <pre>${escapeHtml(text)}</pre>
+          </details>
+        `;
+      }
+    }
+    return `<pre>${escapeHtml(text)}</pre>`;
+  }
+  if (t === "tool_use") {
+    const lbl = `tool_use → ${blk.name || "?"}  (id ${blk.id || "?"})`;
+    return `<div class="blk-label blk-tool-use">${escapeHtml(lbl)}</div>` +
+           `<pre>${escapeHtml(JSON.stringify(blk.input || {}, null, 2))}</pre>`;
+  }
+  if (t === "tool_result") {
+    const lbl = `tool_result  (id ${blk.tool_use_id || "?"})${blk.is_error ? "  ERROR" : ""}`;
+    let body;
+    if (typeof blk.content === "string") body = blk.content;
+    else body = JSON.stringify(blk.content, null, 2);
+    return `<div class="blk-label blk-tool-result">${escapeHtml(lbl)}</div>` +
+           `<pre>${escapeHtml(body)}</pre>`;
+  }
+  if (t === "thinking") {
+    return `<div class="blk-label">thinking</div>` +
+           `<pre>${escapeHtml(blk.thinking || "")}</pre>`;
+  }
+  return `<div class="blk-label">${escapeHtml(t || "block")}</div>` +
+         `<pre>${escapeHtml(JSON.stringify(blk, null, 2))}</pre>`;
+}
+
+function clearPanes() {
+  currentName = null;
+  currentData = null;
+  $("envelope-pane").innerHTML = '<div class="empty">No taps yet.</div>';
+  $("messages-pane").innerHTML = "";
+  $("env-meta").textContent = "—";
+  $("msg-meta").textContent = "—";
+}
+
+function updateLive() {
+  const live = $("live");
+  const text = $("live-text");
+  const age = (Date.now() - lastFetchOk) / 1000;
+  if (lastFetchOk === 0 || age > 6) {
+    live.classList.add("stale");
+    text.textContent = lastFetchOk === 0 ? "connecting…" : `idle ${Math.round(age)}s`;
+  } else {
+    live.classList.remove("stale");
+    text.textContent = "live";
+  }
+}
+
+function escapeHtml(s) {
+  if (s == null) return "";
+  return String(s)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+async function captureSnapshot() {
+  // Both buttons trigger the same flow; keep them in sync.
+  const topbarBtn = $("topbar-capture");
+  const welcomeBtn = $("snapshot-btn");
+  const welcomeStatus = $("snapshot-status");
+
+  const setBusy = () => {
+    if (topbarBtn) {
+      topbarBtn.disabled = true;
+      topbarBtn.className = "topbar-action";
+      topbarBtn.textContent = "Capturing…";
+    }
+    if (welcomeBtn) welcomeBtn.disabled = true;
+    if (welcomeStatus) {
+      welcomeStatus.className = "welcome-status";
+      welcomeStatus.textContent = "Spawning claude -p \"ping\" through the proxy… (~3-10s)";
+    }
+  };
+
+  const setIdle = (kind, msg) => {
+    // kind: "" | "ok" | "error"
+    if (topbarBtn) {
+      topbarBtn.disabled = false;
+      topbarBtn.className = "topbar-action" + (kind ? " " + kind : "");
+      topbarBtn.textContent = kind === "ok"    ? "✓ Captured"
+                            : kind === "error" ? "✗ Failed — retry"
+                            :                    "+ Capture snapshot";
+      // Fade success/error styling back to neutral after 3s.
+      if (kind) {
+        setTimeout(() => {
+          topbarBtn.className = "topbar-action";
+          topbarBtn.textContent = "+ Capture snapshot";
+        }, 3000);
+      }
+    }
+    if (welcomeBtn) welcomeBtn.disabled = false;
+    if (welcomeStatus && msg !== undefined) {
+      welcomeStatus.className = "welcome-status" + (kind ? " " + kind : "");
+      welcomeStatus.textContent = msg;
+    }
+  };
+
+  setBusy();
+
+  try {
+    const r = await fetch("/api/snapshot", {method: "POST"});
+    const result = await r.json();
+    if (result.ok) {
+      setIdle("ok", `Captured ${result.new_tap_files.length} tap(s).`);
+      await fetchTaps();
+    } else {
+      setIdle("error", "Snapshot failed: " + (result.error || "unknown"));
+    }
+  } catch (e) {
+    setIdle("error", "Request failed: " + e.message + " (proxy may need restart to pick up /api/snapshot)");
+  }
+}
+
+// Boot
+toggleWelcome();   // show welcome immediately, before first fetch resolves
+$("snapshot-btn").addEventListener("click", captureSnapshot);
+$("topbar-capture").addEventListener("click", captureSnapshot);
+$("topbar-clear").addEventListener("click", async () => {
+  if (taps.length === 0) return;
+  if (!confirm(`Delete all ${taps.length} captured tap(s)? This can't be undone.`)) return;
+  try {
+    const r = await fetch("/api/taps", {method: "DELETE"});
+    const result = await r.json();
+    if (result.ok) {
+      currentName = null;
+      currentData = null;
+      previousData = null;
+      taps = [];
+      renderTimeline();
+      toggleWelcome();
+      $("envelope-pane").innerHTML = "";
+      $("messages-pane").innerHTML = "";
+      $("env-meta").textContent = "—";
+      $("msg-meta").textContent = "—";
+    }
+  } catch (e) { alert("Clear failed: " + e.message); }
+});
+fetchTaps();
+setInterval(fetchTaps, POLL_MS);
+</script>
+</body>
+</html>

@@ -1,0 +1,13 @@
+# Captured API traffic — contains everything typed in a session, including any pasted secrets.
+taps/*.json
+
+# Python
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store
+
+# Runtime
+*.log
+*.pid
